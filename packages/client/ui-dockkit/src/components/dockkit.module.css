@@ -134,6 +134,7 @@
 /* Every tab remains a sibling. Explicit tracks determine placement; order only
    changes painting, so raising a float never moves a connected DOM ancestor. */
 .tabLayout {
+  position: relative;
   display: grid;
   flex: 1 1 auto;
   grid-template-rows: minmax(0, 1fr);
@@ -172,8 +173,16 @@
   background: var(--dsw-alias-bg-base);
 }
 
-.tabCell[data-dockkit-host='dock'][data-dockkit-column='0'] > .tabHost {
+/* A pane on the panel's left edge draws it; in a stacked or nested tree several
+   panes share that edge. */
+.tabCellEdgeLeft {
   border-left: 0.5px solid var(--dsw-alias-border-l4);
+}
+
+/* Every pane below another pane owns the seam: a 0.5px pseudo-element
+   antialiases away on dark grounds, so a real 1px border carries it. */
+.tabCellSeamTop {
+  border-top: 1px solid color-mix(in srgb, var(--dsw-alias-label-caption) 55%, transparent);
 }
 
 .tabHostHeader {
@@ -183,6 +192,14 @@
 .tabHostBody {
   position: relative;
   min-width: 0;
+}
+
+/* One overlay per split, sized to the split's own rectangle so a nested drag's
+   travel is bounded there; only the line itself takes pointer events. */
+.tabDividerRegion {
+  position: absolute;
+  z-index: calc(var(--dsh-dockkit-dock-layer, 10) + 1);
+  pointer-events: none;
 }
 
 .tabLayoutDivider {
@@ -205,6 +222,42 @@
   left: -4px;
   right: -4px;
   background: linear-gradient(to bottom, transparent, var(--dsw-alias-label-caption) 50%, transparent) center / 1px 100% no-repeat;
+}
+
+/* A stacked pair's seam is a real border on the lower cell: a 0.5px
+   pseudo-element antialiases away on dark grounds, and the tab strip draws no
+   border of its own. The divider keeps its drag surface, without a second
+   hairline under the border. */
+.tabLayout[data-dockkit-axis='column'] .tabCell[data-dockkit-host='dock'][data-dockkit-column='1'],
+.tabLayout[data-dockkit-axis='column'] .emptyTabHost[data-dockkit-column='1'] {
+  border-top: 1px solid color-mix(in srgb, var(--dsw-alias-label-caption) 55%, transparent);
+}
+
+/* A stacked pair: the same seam turned horizontal. */
+.tabLayoutDividerColumn {
+  width: auto;
+  height: 0;
+  cursor: row-resize;
+}
+
+.tabLayoutDividerColumn::before {
+  top: -0.25px;
+  bottom: auto;
+  left: 0;
+  right: 0;
+  width: auto;
+  height: 0.5px;
+  background: transparent;
+}
+
+.tabLayoutDividerColumn::after {
+  top: -4px;
+  bottom: -4px;
+  left: 0;
+  right: 0;
+  /* The lower pane's 1px border is the visible seam; this layer only widens
+     the pointer target, so it must not paint a second line under it. */
+  background: none;
 }
 
 /* A body that overflows scrolls inside its pane; nothing escapes the pane. */

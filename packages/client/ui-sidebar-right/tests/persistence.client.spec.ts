@@ -55,6 +55,20 @@ it('restores current layout independently by Session with a fresh undo history',
   expect(createSidebarRightStore(seed).create('second').getSnapshot()).toEqual(second.getSnapshot())
 })
 
+it('persists and restores a stacked two-pane layout', () => {
+  storage()
+  const first = createSidebarRightStore(seed).create(sessionId)
+  first.actions.setExpanded(sessionId, true)
+  first.actions.splitPane(sessionId, undefined, undefined, 'column')
+  const layout = first.getSnapshot().bySession[sessionId]!.layout
+  const split = Object.values(layout.nodes).find(node => node.kind === 'split')!
+  expect(split.kind === 'split' ? split.axis : undefined).toBe('column')
+  const restored = createSidebarRightStore(seed).create(sessionId)
+  const restoredSplit = Object.values(restored.getSnapshot().bySession[sessionId]!.layout.nodes)
+    .find(node => node.kind === 'split')!
+  expect(restoredSplit.kind === 'split' ? restoredSplit.axis : undefined).toBe('column')
+})
+
 it('pins restored records during adoption before the first render or store mutation', async () => {
   storage()
   const first = createSidebarRightStore(seed).create(sessionId)

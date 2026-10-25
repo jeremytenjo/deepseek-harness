@@ -38,8 +38,8 @@ import type {
 } from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '../contract/slots.ts'
 import type { DockIntents, DockMode, FloatRect, TabId, TabRecord, TabRenderer } from '@deepseek-ai/dsh-client-ui-dockkit'
-import { canSplit, dockPaneIds, DockLayout, findPaneContentTab } from '@deepseek-ai/dsh-client-ui-dockkit'
-import type { HalvesFit, LayoutState, PaneId } from '@deepseek-ai/dsh-client-ui-dockkit'
+import { canSplit, DockLayout, findPaneContentTab } from '@deepseek-ai/dsh-client-ui-dockkit'
+import type { HalvesFit, LayoutState, PaneId, SplitAxis } from '@deepseek-ai/dsh-client-ui-dockkit'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import { GUIDE_KIND, pageAddress } from '../contract/seed.ts'
 import { dockLabels } from '../labels.ts'
@@ -83,9 +83,9 @@ export interface SidebarRightInjected {
    *
    * The docking kit measures its panes after it renders; the seat forwards each
    * reading, and the service applies it when it splits this seat's Session.
-   * @param canSplitPane - whether two working halves of a docked pane would fit; unmeasured panes fit.
+   * @param canSplitPane - whether two working halves of a docked pane would fit along one axis; unmeasured panes fit.
    */
-  readonly measureRoom: (canSplitPane: (paneId: PaneId) => boolean) => void
+  readonly measureRoom: (canSplitPane: (paneId: PaneId, axis: SplitAxis) => boolean) => void
   /**
    * Record whether the frame width this seat renders at presents an expanded panel fullscreen automatically.
    *
@@ -102,7 +102,7 @@ export interface SidebarRightInjected {
   /** Close through the resource owner's cleanup handler. */
   readonly closeTab: (tabId: TabId) => void
   /** Split through the same controller as keyboard commands. */
-  readonly splitPane: (paneId: PaneId) => void
+  readonly splitPane: (paneId: PaneId, axis?: SplitAxis) => void
   /** Toggle the dock panel using its current display mode. */
   readonly toggleFullscreen: () => void
   readonly hooks: {
@@ -333,8 +333,8 @@ function SidebarPanel(panel: PanelProps & { width: number; panelRef: RefObject<H
       <div className={css.panelBody}>
         <DockLayout
           state={surface.layout}
-          canSplit={canSplit(surface.layout) && dockPaneIds(surface.layout).length < 2}
-          dropZones="horizontal"
+          canSplit={canSplit(surface.layout)}
+          dropZones="edges"
           minPaneFraction={0.2}
           canAddTab={paneId => guideIn(surface.layout, paneId) === undefined}
           canCloseTab={tabId => canCloseTab(surface, tabId)}
@@ -377,7 +377,7 @@ export function RightbarSeat({
   const panelRef = useRef<HTMLDivElement | null>(null)
   // A reading never re-renders anything: the service applies it when it splits.
   const reportRoom = useCallback((fits: ReadonlyMap<PaneId, HalvesFit>): void => {
-    measureRoom(paneId => fits.get(paneId)?.row !== false)
+    measureRoom((paneId, axis) => fits.get(paneId)?.[axis] !== false)
   }, [measureRoom])
   const track = shown && !autoFullscreen
 

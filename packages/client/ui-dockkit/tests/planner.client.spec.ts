@@ -45,8 +45,20 @@ describe('planner determinism', () => {
     expect(planOne.length).toBeGreaterThan(0)
   })
 
-  it('leaves the state it was handed untouched', () => {
+  it('plans a column split below the pane when asked for one', () => {
     const { state, minter } = seededState()
+    const ops = planSplitPane(state, minter.next, undefined, seedTab, 'column')
+    const split = ops.find(op => op.type === 'split')
+    expect(split).toMatchObject({ axis: 'column', direction: 'after' })
+    const next = applyAll(state, ops)
+    expect(getSplit(next, next.rootId).axis).toBe('column')
+    // The new pane is below: the first child is the original pane.
+    const root = getSplit(next, next.rootId)
+    expect(dockPaneIds(next)[0]).toBe(getPane(state, state.rootId).id)
+    expect(root.children).toHaveLength(2)
+  })
+
+  it('leaves the state it was handed untouched', () => {    const { state, minter } = seededState()
     const before = frozen(state)
     const mint = minter.next
 
@@ -72,21 +84,21 @@ describe('planner determinism', () => {
     expect(planDropTab(state, mint, tabId, getPane(state, state.rootId).id, 'center')).toEqual([])
   })
 
-  it('refuses to plan past the pane budget', () => {
+  it('keeps planning splits without a pane budget', () => {
     const seeded = seededState()
     let { state } = seeded
     const { minter } = seeded
     const mint = minter.next
-    for (let index = 0; index < 3; index += 1) {
+    for (let index = 0; index < 5; index += 1) {
       state = applyAll(state, planSplitPane(state, mint, state.activePaneId, seedTab))
     }
-    expect(planSplitPane(state, mint, state.activePaneId, seedTab)).toEqual([])
+    expect(planSplitPane(state, mint, state.activePaneId, seedTab)).not.toEqual([])
     // The root is a split once panes exist, so address a real pane.
     const firstPane = dockPaneIds(state)[0]
     if (firstPane === undefined) throw new Error('fixture: no docked pane')
     const tabId = getPane(state, firstPane).tabs[0]
     if (tabId === undefined) throw new Error('fixture: seeded tab missing')
-    expect(planDropTab(state, mint, tabId, firstPane, 'right')).toEqual([])
+    expect(planDropTab(state, mint, tabId, firstPane, 'right', seedTab)).not.toEqual([])
   })
 })
 

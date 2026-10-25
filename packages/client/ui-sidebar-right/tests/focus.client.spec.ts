@@ -186,7 +186,7 @@ describe('sidebar focus targets', () => {
     h.controller.toggleFullscreen(target)
     expect(h.layout().mode).toBe('push')
     h.controller.split(target.paneId)
-    expect(h.controller.splitBlock(target)).toBe('budget')
+    expect(h.controller.splitBlock(target)).toBeUndefined()
     h.controller.openTab('files')
     const files = h.controller.active()!.id
     h.controller.float(files)
@@ -478,7 +478,7 @@ describe('sidebar keyboard commands', () => {
     releases.push(h.show())
     const splitNow = split.resolve(context)
     if (splitNow.status === 'handled') splitNow.run()
-    expect(h.controller.splitBlock(h.controller.commandTarget(null)!)).toBe('budget')
+    expect(h.controller.splitBlock(h.controller.commandTarget(null)!)).toBeUndefined()
     h.controller.openTab('files')
     const files = h.controller.active()!.id
     h.controller.float(files)
@@ -487,17 +487,32 @@ describe('sidebar keyboard commands', () => {
     expect(fullscreen.resolve({ ...context, target: floated })).toMatchObject({ status: 'blocked', reason: en['command.float'] })
   })
 
+  it('splits the focused pane downward with the command binding', () => {
+    const h = harness()
+    const registry = new ShortcutRegistry('desktop', 'macos')
+    releases.push(registerSidebarShortcuts({ register: command => registry.register(command),
+      runtime: registry.runtime }, h.controller, makeTranslate(en), vi.fn()))
+    const pane = h.paneElement()
+    pane.focus()
+    const gesture = { code: 'Backslash', meta: true, control: false, alt: false, shift: true,
+      repeat: false, composing: false, defaultPrevented: false }
+    expect(registry.dispatch(gesture, { target: pane, region: 'page', modal: null }, vi.fn()).status).toBe('handled')
+    const root = h.layout().nodes[h.layout().rootId]
+    if (root?.kind !== 'split') throw new Error('expected a split')
+    expect(root.axis).toBe('column')
+  })
+
   it.each([
-    { platform: 'macos', keys: ['Shift+Meta+B', 'Meta+\\', 'Alt+Meta+Enter', 'Alt+Meta+W', undefined] },
-    { platform: 'windows', keys: ['Control+Shift+B', 'Control+\\', 'Control+Alt+Enter', 'Control+Alt+W', 'Control+Alt+R'] },
-    { platform: 'linux', keys: [undefined, undefined, undefined, undefined, undefined] },
+    { platform: 'macos', keys: ['Shift+Meta+B', 'Meta+\\', 'Shift+Meta+\\', 'Alt+Meta+Enter', 'Alt+Meta+W', undefined] },
+    { platform: 'windows', keys: ['Control+Shift+B', 'Control+\\', 'Control+Shift+\\', 'Control+Alt+Enter', 'Control+Alt+W', 'Control+Alt+R'] },
+    { platform: 'linux', keys: [undefined, undefined, undefined, undefined, undefined, undefined] },
   ] as const)('publishes the Web defaults and unbound commands on $platform', ({ platform, keys }) => {
     const h = harness()
     const registry = new ShortcutRegistry('web', platform)
     releases.push(registerSidebarShortcuts({ register: command => registry.register(command),
       runtime: registry.runtime }, h.controller, makeTranslate(en), vi.fn()))
     expect(registry.catalog.getSnapshot().map(row => row.id)).toEqual([
-      'sidebar.right.toggle', 'pane.split', 'pane.fullscreen.toggle', 'page.close', 'page.refresh',
+      'sidebar.right.toggle', 'pane.split', 'pane.splitDown', 'pane.fullscreen.toggle', 'page.close', 'page.refresh',
     ])
     expect(registry.catalog.getSnapshot().map(row => row.aria)).toEqual(keys)
   })

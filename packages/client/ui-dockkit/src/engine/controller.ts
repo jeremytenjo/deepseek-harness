@@ -13,7 +13,7 @@
  * factory, and a tab's `kind` is an opaque string.
  */
 import type {
-  DockMode, DockZone, FloatRect, LayoutOp, LayoutState, PaneId, SplitId, TabId,
+  DockMode, DockZone, FloatRect, LayoutOp, LayoutState, PaneId, SplitAxis, SplitId, TabId,
 } from '../contract/types.ts'
 import { canSplit } from './constraints.ts'
 import { createIdMinter, createInitialState, type IdMinter, type TabFactory } from './initial.ts'
@@ -141,12 +141,13 @@ export class DockController {
   }
 
   /**
-   * Split a pane to its right and seat the embedder's pane tab in the new pane.
+   * Split a pane and seat the embedder's pane tab in the new pane.
    * @param paneId - pane to split; defaults to the active docked pane.
-   * @returns false when the docked grid is already at `MAX_DOCK_PANES`.
+   * @param axis - `'row'` puts the new pane to the right, `'column'` below.
+   * @returns false when the split changes nothing.
    */
-  splitPane(paneId?: PaneId): boolean {
-    return this.run(planSplitPane(this.state, this.mint, paneId, this.makePaneTab))
+  splitPane(paneId?: PaneId, axis: SplitAxis = 'row'): boolean {
+    return this.run(planSplitPane(this.state, this.mint, paneId, this.makePaneTab, axis))
   }
 
   /**

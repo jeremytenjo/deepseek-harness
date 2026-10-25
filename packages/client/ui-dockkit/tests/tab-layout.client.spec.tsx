@@ -3,8 +3,7 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render } from '@testing-library/react'
 import type { ComponentProps } from 'react'
 import { TabLayout } from '../src/components/TabLayout.tsx'
-import { DockController } from '../src/engine/controller.ts'
-import { getNode, getPane } from '../src/engine/tree.ts'
+import { getNode, getPane, topRightPaneId } from '../src/engine/tree.ts'
 import type { PaneCallbacks } from '../src/components/render.ts'
 import type { TabId } from '../src/contract/types.ts'
 import { followPointer } from '../src/components/pointer.ts'
@@ -21,7 +20,7 @@ function mounted(controller = seededController(), options: Partial<ComponentProp
     dropTarget: undefined, draggingTabId: undefined, labels: TEST_LABELS,
     renderTab: tab => <input data-body={tab.id} defaultValue={tab.title} />,
     renderTabTitle: undefined, renderTabMenuItems: undefined,
-    chromePaneId: getPane(controller.getSnapshot().state, controller.getSnapshot().state.rootId).id,
+    chromePaneId: topRightPaneId(controller.getSnapshot().state),
     chrome: undefined,
   }
   const props = () => ({ state: controller.getSnapshot().state, callbacks, intents: controller, preview: undefined, ...options })
@@ -235,29 +234,39 @@ it('does not require a docked strip when a selected tab becomes floating in the 
   expect(h.node(`[data-dockkit-content="${second}"]`).hasAttribute('data-dockkit-float')).toBe(true)
 })
 
-it('renders an empty pane and rejects unsupported docked trees', () => {
-  const controller = new DockController()
+it('renders a stacked pair', () => {
+  const controller = seededController()
   controller.setExpanded(true)
+  expect(controller.splitPane(undefined, 'column')).toBe(true)
   const h = mounted(controller)
-  expect(h.node('[data-dockkit-empty]')).toBeDefined()
-  controller.openContent({ kind: 'file', contentId: 'file:a', title: 'A' })
-  controller.splitPane()
-  const state = controller.getSnapshot().state
-  const root = getNode(state, state.rootId)
+  const layout = h.view.container.firstElementChild as HTMLElement
+  expect(layout.dataset.dockkitAxis).toBe('column')
+  expect([...h.view.container.querySelectorAll<HTMLElement>('[data-dockkit-host="dock"]')].map(cell => cell.style.gridRow))
+    .toEqual(['1 / span 1', '2 / span 1'])
+  const divider = h.node('[data-dockkit-divider]')
+  expect(divider.style.top).toBe('50%')
+  expect(divider.style.height).toBe('0px')
+  expect(divider.style.left).toBe('0px')
+})
+
+it('renders a nested tree of three panes', () => {
+  const controller = seededController()
+  controller.setExpanded(true)
+  expect(controller.splitPane()).toBe(true)
+  const first = controller.getSnapshot().state
+  const root = getNode(first, first.rootId)
   if (root.kind !== 'split') throw new Error('expected a split')
-  vi.spyOn(console, 'error').mockImplementation(() => {})
-  const suppress = (event: ErrorEvent): void => {
-    if (event.error instanceof Error && event.error.message === 'DockLayout requires one pane or two horizontally split panes') {
-      event.preventDefault()
-    }
-  }
-  window.addEventListener('error', suppress)
-  try {
-    expect(() =>{  h.redraw({ state: { ...state, nodes: { ...state.nodes, [root.id]: { ...root, axis: 'column' } } } }) })
-      .toThrow('two horizontally split panes')
-  } finally {
-    window.removeEventListener('error', suppress)
-  }
+  const second = root.children[1]
+  if (second === undefined) throw new Error('expected a second pane')
+  expect(controller.splitPane(getPane(first, second).id, 'column')).toBe(true)
+  const state = controller.getSnapshot().state
+  const h = mounted(controller)
+  h.redraw({ state })
+  expect(h.view.container.querySelectorAll('[data-dockkit-host="dock"]')).toHaveLength(3)
+  expect(h.view.container.querySelectorAll('[data-dockkit-divider]')).toHaveLength(2)
+  const cells = [...h.view.container.querySelectorAll<HTMLElement>('[data-dockkit-host="dock"]')]
+  expect(cells.map(cell => cell.style.gridColumn)).toEqual(['1 / span 1', '2 / span 1', '2 / span 1'])
+  expect(cells.map(cell => cell.style.gridRow)).toEqual(['1 / span 2', '1 / span 1', '2 / span 1'])
 })
 
 it('keeps a superseding gesture marker when an older follower detaches', () => {

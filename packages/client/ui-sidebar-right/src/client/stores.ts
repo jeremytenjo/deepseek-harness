@@ -29,7 +29,7 @@
 import { defineStore, type EngineStoreHandle } from '@deepseek-ai/dsh-client-store'
 import { clearSidebarLayout, readSidebarLayout, writeSidebarLayout } from './persistence.ts'
 import type {
-  DockMode, DockZone, FloatRect, History, LayoutOp, LayoutState, Mint, PaneId, SplitId, TabId, TabRecord,
+  DockMode, DockZone, FloatRect, History, LayoutOp, LayoutState, Mint, PaneId, SplitAxis, SplitId, TabId, TabRecord,
 } from '@deepseek-ai/dsh-client-ui-dockkit'
 import {
   activeDockPaneId, createInitialState, dockPaneIds, EMPTY_HISTORY, findContentTab, findPaneContentTab, findTabPane, getPane,
@@ -223,7 +223,7 @@ type SidebarRightActions = {
   setExpanded: (draft: SidebarRightState, sessionId: string, expanded: boolean) => void
   toggleExpanded: (draft: SidebarRightState, sessionId: string) => void
   setMode: (draft: SidebarRightState, sessionId: string, mode: DockMode) => void
-  splitPane: (draft: SidebarRightState, sessionId: string, paneId?: PaneId, settled?: (paneId: PaneId) => void) => void
+  splitPane: (draft: SidebarRightState, sessionId: string, paneId?: PaneId, settled?: (paneId: PaneId) => void, axis?: SplitAxis) => void
   openContent: (
     draft: SidebarRightState,
     sessionId: string,
@@ -286,12 +286,11 @@ export function createSidebarRightStore(
       },
       // `settled` reports the pane the split created, synchronously, because
       // actions return nothing; it is not called when nothing was split.
-      splitPane: (d, sessionId: string, paneId?: PaneId, settled?: (paneId: PaneId) => void) => {
+      splitPane: (d, sessionId: string, paneId?: PaneId, settled?: (paneId: PaneId) => void, axis: SplitAxis = 'row') => {
         d.bySession = seat(d, sessionId, (s) => {
-          const next = advance(s, (state, mint, makeTab) => dockPaneIds(state).length >= 2
-            || getPane(state, paneId ?? activeDockPaneId(state)).tabs.length === 0
+          const next = advance(s, (state, mint, makeTab) => getPane(state, paneId ?? activeDockPaneId(state)).tabs.length === 0
             ? []
-            : planSplitPane(state, mint, paneId, makeTab), seed)
+            : planSplitPane(state, mint, paneId, makeTab, axis), seed)
           if (settled !== undefined && next !== s) {
             const before = new Set(dockPaneIds(s.layout))
             for (const id of dockPaneIds(next.layout)) {
@@ -387,8 +386,6 @@ export function createSidebarRightStore(
       // pane's only tab to that pane's own edge, the default page backfills it.
       dropTab: (d, sessionId: string, tabId: TabId, paneId: PaneId, zone: DockZone) => {
         d.bySession = seat(d, sessionId, s => advance(s, (state, mint, makeTab) => {
-          if (zone === 'top' || zone === 'bottom') return []
-          if (zone !== 'center' && dockPaneIds(state).length >= 2) return []
           const plan = (): readonly LayoutOp[] => planDropTab(state, mint, tabId, paneId, zone, makeTab)
           return zone === 'center' ? arriving(state, tabId, paneId, plan) : plan()
         }, seed))

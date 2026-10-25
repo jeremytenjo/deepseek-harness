@@ -89,16 +89,13 @@ describe('splitting', () => {
     expect(controller.activeDockPaneId()).toBe(paneId)
   })
 
-  it('stops at four panes without recording anything', () => {
+  it('keeps splitting beyond four panes', () => {
     const { controller } = expanded()
+    for (let index = 0; index < 6; index += 1) expect(controller.splitPane()).toBe(true)
+    expect(dockPaneCount(controller.getSnapshot().state)).toBe(7)
+    expect(controller.getSnapshot().canSplit).toBe(true)
     expect(controller.splitPane()).toBe(true)
-    expect(controller.splitPane()).toBe(true)
-    expect(controller.splitPane()).toBe(true)
-    expect(dockPaneCount(controller.getSnapshot().state)).toBe(4)
-    const before = controller.ops.length
-    expect(controller.splitPane()).toBe(false)
-    expect(controller.ops).toHaveLength(before)
-    expect(controller.getSnapshot().canSplit).toBe(false)
+    expect(dockPaneCount(controller.getSnapshot().state)).toBe(8)
   })
 })
 
@@ -170,15 +167,14 @@ describe('drops', () => {
     expect(dockPaneCount(state)).toBe(2)
   })
 
-  it('refuses an edge drop once the grid is full', () => {
+  it('accepts an edge drop beyond four panes', () => {
     const { controller, paneId } = expanded()
     const tabId = controller.openContent({ contentId: 'dsh-resource://file/session/s/a.txt', title: 'a.txt', kind: 'text-preview' })
     controller.splitPane()
     controller.splitPane()
     controller.splitPane()
-    const before = controller.ops.length
-    expect(controller.dropTab(tabId, paneId, 'right')).toBe(false)
-    expect(controller.ops).toHaveLength(before)
+    expect(controller.dropTab(tabId, paneId, 'right')).toBe(true)
+    expect(dockPaneCount(controller.getSnapshot().state)).toBe(5)
   })
 
   it('reorders inside one pane', () => {

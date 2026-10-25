@@ -30,11 +30,11 @@ function grid(count: number): LayoutState {
 }
 
 describe('pane cap', () => {
-  it('allows splitting up to four docked panes and no further', () => {
-    expect(MAX_DOCK_PANES).toBe(4)
+  it('keeps the docked tree unbounded', () => {
+    expect(MAX_DOCK_PANES).toBe(Number.POSITIVE_INFINITY)
     expect(canSplit(createInitialState(createIdMinter(), seedTab))).toBe(true)
-    expect(dockPaneCount(grid(4))).toBe(4)
-    expect(canSplit(grid(4))).toBe(false)
+    expect(dockPaneCount(grid(8))).toBe(8)
+    expect(canSplit(grid(8))).toBe(true)
     expect(canSplit(grid(3))).toBe(true)
   })
 

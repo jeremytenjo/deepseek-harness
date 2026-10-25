@@ -141,7 +141,7 @@ describe('createSidebarRightStore — the sequence', () => {
     expect(dockPaneIds(layout())).toEqual([secondPane])
   })
 
-  it('allows two docked panes and rejects further splits without recording', () => {
+  it('keeps splitting without a pane budget', () => {
     const { actions, layout, entries, expand } = harness()
     expand()
     actions.splitPane(SESSION)
@@ -149,19 +149,44 @@ describe('createSidebarRightStore — the sequence', () => {
     const before = entries()
     const settled = vi.fn()
     actions.splitPane(SESSION, undefined, settled)
-    expect(dockPaneIds(layout())).toHaveLength(2)
-    expect(entries()).toBe(before)
-    expect(settled).not.toHaveBeenCalled()
+    expect(dockPaneIds(layout())).toHaveLength(3)
+    expect(entries()).toBe(before + 1)
+    expect(settled).toHaveBeenCalledOnce()
   })
 
-  it('rejects vertical drops and keeps split ratios within twenty to eighty percent', () => {
+  it.each(['top', 'bottom'] as const)('splits one pane at its %s edge into a stacked pair', (zone) => {
+    const { actions, layout, entries, guide, expand } = harness()
+    expand()
+    actions.openContent(SESSION, {
+      kind: 'text', contentId: 'dsh-resource://file/session/s-test/a.txt', title: 'a',
+    }, () => {})
+    const text = Object.values(layout().tabs).find(tab => tab.kind === 'text')
+    if (text === undefined) throw new Error('expected the text tab')
+    const before = layout()
+    const home = getPane(before, before.rootId).id
+    const recorded = entries()
+
+    actions.dropTab(SESSION, text.id, home, zone)
+
+    const split = getSplit(layout(), layout().rootId)
+    const destination = findTabPane(layout(), text.id)
+    expect(split.axis).toBe('column')
+    expect(split.children).toEqual(zone === 'top' ? [destination.id, home] : [home, destination.id])
+    expect(split.sizes).toEqual([0.5, 0.5])
+    expect(getPane(layout(), home).tabs).toEqual([guide()])
+    expect(entries()).toBe(recorded + 1)
+    const dropped = layout()
+
+    actions.undo(SESSION)
+    expect(layout()).toEqual(before)
+    actions.redo(SESSION)
+    expect(layout()).toEqual(dropped)
+  })
+
+  it('keeps split ratios within twenty to eighty percent and allows another split', () => {
     const { actions, layout, entries, guide, expand } = harness()
     expand()
     actions.openContent(SESSION, { kind: 'text', contentId: 'file:a', title: 'a' }, () => {})
-    const before = entries()
-    actions.dropTab(SESSION, guide(), layout().activePaneId, 'top')
-    actions.dropTab(SESSION, guide(), layout().activePaneId, 'bottom')
-    expect(entries()).toBe(before)
     actions.splitPane(SESSION)
     const split = getSplit(layout(), layout().rootId).id
     actions.resizeSplit(SESSION, split, [0.01, 0.99])
@@ -170,7 +195,8 @@ describe('createSidebarRightStore — the sequence', () => {
     expect(getSplit(layout(), split).sizes).toEqual([0.8, 0.2])
     const splitCount = entries()
     actions.dropTab(SESSION, guide(), layout().activePaneId, 'right')
-    expect(entries()).toBe(splitCount)
+    expect(entries()).toBe(splitCount + 1)
+    expect(dockPaneIds(layout())).toHaveLength(3)
   })
 
   it('materializes a session empty on open without recording, then seeds the guide with the first expansion', () => {

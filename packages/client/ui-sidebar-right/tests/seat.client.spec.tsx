@@ -913,7 +913,7 @@ describe('slot-owned useTabInfo', () => {
     expect(document.querySelector('[data-dockkit-tab-menu]')).toBeNull()
   })
 
-  it('keeps the current binding in the disabled split tooltip when it changes or is cleared', async () => {
+  it('keeps the current binding in the split tooltip when it changes or is cleared', async () => {
     const h = await mountSeat()
     const split: ShortcutCatalogEntry = {
       id: 'pane.split' as ShortcutCommandId, label: 'Split', aliases: [],
@@ -929,12 +929,12 @@ describe('slot-owned useTabInfo', () => {
     const anchor = element(h.view.container, '[data-dockkit-split-button]').parentElement!
     fireEvent.keyDown(anchor, { key: 'Tab' })
     fireEvent.focus(anchor)
-    expect(document.querySelector('[role="tooltip"]')?.getAttribute('aria-label')).toBe('Two panes is the limit ⌘ \\')
+    expect(document.querySelector('[role="tooltip"]')?.getAttribute('aria-label')).toBe('Split ⌘ \\')
     act(() => { h.catalog.set([{ ...split, binding: { code: 'KeyG', modifiers: ['control'] },
       keys: ['Ctrl', '+', 'G'], aria: 'Control+G' }]) })
-    expect(document.querySelector('[role="tooltip"]')?.getAttribute('aria-label')).toBe('Two panes is the limit Ctrl + G')
+    expect(document.querySelector('[role="tooltip"]')?.getAttribute('aria-label')).toBe('Split Ctrl + G')
     act(() => { h.catalog.set([{ ...split, binding: null, keys: [], aria: undefined }]) })
-    expect(document.querySelector('[role="tooltip"]')?.textContent).toBe('Two panes is the limit')
+    expect(document.querySelector('[role="tooltip"]')?.textContent).toBe('Split')
   })
 
   it('advertises configured pane and page-close controls', async () => {
@@ -951,32 +951,31 @@ describe('slot-owned useTabInfo', () => {
     }
   })
 
-  it('explains the two-pane limit and adds a guide only to a pane without one', async () => {
+  it('adds a guide only to a pane without one while the tree keeps growing', async () => {
     const h = await mountSeat()
-    // Expanding first seeds the left pane's guide; only the right pane will lack one.
+    // Expanding first seeds the left pane's guide; later panes start with one too.
     act(() => { h.controller.toggleExpanded() })
     h.open()
-    const splitButtons = () => h.view.container.querySelectorAll<HTMLButtonElement>('[data-dockkit-split-button]')
+    const splitButtons = (): HTMLButtonElement[] => [...h.view.container.querySelectorAll<HTMLButtonElement>('[data-dockkit-split-button]')]
     expect(splitButtons()).toHaveLength(1)
     act(() => { h.controller.split() })
     expect(dockPaneIds(h.layout())).toHaveLength(2)
-    const stored = h.instance.getSnapshot()
-    act(() => { expect(h.controller.split()).toBeUndefined() })
-    expect(h.instance.getSnapshot()).toBe(stored)
-    expect(splitButtons()).toHaveLength(2)
-    expect([...splitButtons()].every(button => button.hasAttribute('disabled'))).toBe(true)
-    const right = dockPaneIds(h.layout())[1]!
+    act(() => { expect(h.controller.split()).toBeDefined() })
+    expect(dockPaneIds(h.layout())).toHaveLength(3)
+    expect(splitButtons()).toHaveLength(3)
+    expect(splitButtons().every(button => button.disabled)).toBe(false)
+    const right = dockPaneIds(h.layout())[2]!
     h.open('right.txt', { paneId: right })
     const guide = getPane(h.layout(), right).tabs.find(id => h.layout().tabs[id]?.kind === 'guide')!
     act(() => { h.actions.closeTab(SESSION, guide) })
-    const add = element(h.view.container, '[data-dockkit-add-tab]')
+    const add = element(h.view.container, `[data-dockkit-pane="${right}"] [data-dockkit-add-tab]`)
     expect(add.closest('[data-dockkit-pane]')?.getAttribute('data-dockkit-pane')).toBe(right)
     fireEvent.click(add)
     expect(getPane(h.layout(), right).tabs.filter(id => h.layout().tabs[id]?.kind === 'guide')).toHaveLength(1)
     const closing = [...getPane(h.layout(), right).tabs]
     act(() => { for (const tabId of closing) h.actions.closeTab(SESSION, tabId) })
-    expect(dockPaneIds(h.layout())).toHaveLength(1)
-    expect(splitButtons()).toHaveLength(1)
+    expect(dockPaneIds(h.layout())).toHaveLength(2)
+    expect(splitButtons()).toHaveLength(2)
     expect(splitButtons()[0]?.disabled).toBe(false)
   })
 })

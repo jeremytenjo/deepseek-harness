@@ -16,9 +16,9 @@ import type {} from './locales.ts'
  */
 export function registerSidebarShortcuts(shortcuts: Pick<Shortcuts, 'register' | 'runtime'>, sidebar: SidebarRightController,
   t: TranslateNS<'sidebarRight'>, closeWindow: () => void): () => void {
-  const reason = (kind: 'split' | 'fullscreen', target: SidebarRightTarget): string | null => {
-    if (kind === 'split') {
-      const block = sidebar.splitBlock(target)
+  const reason = (kind: 'split' | 'splitDown' | 'fullscreen', target: SidebarRightTarget): string | null => {
+    if (kind === 'split' || kind === 'splitDown') {
+      const block = sidebar.splitBlock(target, kind === 'splitDown' ? 'column' : 'row')
       return block === undefined ? null : t(`command.${block}`)
     }
     if (target.host === 'float') return t('command.float')
@@ -40,12 +40,15 @@ export function registerSidebarShortcuts(shortcuts: Pick<Shortcuts, 'register' |
       return { status: 'handled', run: () => { if (sidebar.isTargetCurrent(target)) sidebar.toggleExpanded() } }
     },
   })]
-  for (const kind of ['split', 'fullscreen'] as const) {
+  for (const kind of ['split', 'splitDown', 'fullscreen'] as const) {
     const binding: ShortcutBinding = kind === 'split' ? { code: 'Backslash', modifiers: ['primary'] }
-      : { code: 'Enter', modifiers: ['primary', 'alt'] }
+      : kind === 'splitDown' ? { code: 'Backslash', modifiers: ['primary', 'shift'] }
+        : { code: 'Enter', modifiers: ['primary', 'alt'] }
+    const id = kind === 'split' ? 'pane.split' : kind === 'splitDown' ? 'pane.splitDown' : 'pane.fullscreen.toggle'
+    const label = kind === 'split' ? 'dock.splitPane' : kind === 'splitDown' ? 'command.splitDown' : 'command.fullscreen'
     disposers.push(shortcuts.register({
-      id: (kind === 'split' ? 'pane.split' : 'pane.fullscreen.toggle') as ShortcutCommandId,
-      label: () => t(kind === 'split' ? 'dock.splitPane' : 'command.fullscreen'), aliases: [kind, 'panel'],
+      id: id as ShortcutCommandId,
+      label: () => t(label), aliases: kind === 'splitDown' ? ['split down', 'vertical split', 'panel'] : [kind, 'panel'],
       defaults: { 'desktop:macos': binding, 'desktop:windows': binding, 'desktop:linux': binding,
         'web:macos': binding, 'web:windows': binding },
       regions: ['page', 'editable', 'terminal'], modals: [],
@@ -56,8 +59,8 @@ export function registerSidebarShortcuts(shortcuts: Pick<Shortcuts, 'register' |
         if (unavailable !== null) return { status: 'blocked', reason: unavailable }
         return { status: 'handled', run: () => {
           if (!sidebar.isTargetCurrent(target)) return
-          if (kind === 'split') sidebar.split(target.paneId)
-          else sidebar.toggleFullscreen(target)
+          if (kind === 'fullscreen') sidebar.toggleFullscreen(target)
+          else sidebar.split(target.paneId, kind === 'splitDown' ? 'column' : 'row')
         } }
       },
     }))

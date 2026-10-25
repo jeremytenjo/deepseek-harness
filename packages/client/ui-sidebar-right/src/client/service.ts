@@ -36,8 +36,8 @@
 import { sidebarTargetFromElement, type SidebarRightTarget } from './focus.ts'
 import { randomUUID } from '@deepseek-ai/dsh-util-crypto'
 import { createSnapshotStore, type ObservableSnapshot } from '@deepseek-ai/dsh-client-store'
-import type { FloatRect, PaneId, TabId, TabRecord } from '@deepseek-ai/dsh-client-ui-dockkit'
-import { activeDockPaneId, canSplit, findContentTab, findPaneContentTab, dockPaneIds, findTabPane, getPane } from '@deepseek-ai/dsh-client-ui-dockkit'
+import type { FloatRect, PaneId, SplitAxis, TabId, TabRecord } from '@deepseek-ai/dsh-client-ui-dockkit'
+import { activeDockPaneId, canSplit, findContentTab, findPaneContentTab, findTabPane, getPane } from '@deepseek-ai/dsh-client-ui-dockkit'
 import type { BoundActions } from '@deepseek-ai/dsh-client-ui-slots'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { SidebarRightNavigationParams, SidebarRightResourceParams, SidebarRightTabParamsFor } from './contract/params.ts'
@@ -64,8 +64,8 @@ interface Adoption {
   readonly unsubscribe: () => void
 }
 
-/** The room rule's verdict for a docked pane, as a seat's docking kit last measured it: whether two working halves would fit. */
-type RoomRule = (paneId: PaneId) => boolean
+/** The room rule's verdict for a docked pane: whether two working halves fit along one axis. */
+type RoomRule = (paneId: PaneId, axis: SplitAxis) => boolean
 
 /** Plugin-owned Session state the controller reads; the plugin writes it through the factory's callbacks. */
 interface SidebarRightSessions {
@@ -237,14 +237,14 @@ export interface ISidebarRight {
    */
   focus(tabId: TabId): void
   /**
-   * Split a docked pane to its right and seed the new pane, under the same
-   * pane budget and room rule as the strip's split control. Recorded when it
-   * splits.
+   * Split a docked pane and seed the new pane, under the same pane budget and
+   * room rule as the strip's split control. Recorded when it splits.
    * @param paneId - the pane to split; defaults to the active docked pane.
+   * @param axis - `'row'` puts the new pane to the right, `'column'` below; defaults to `'row'`.
    * @returns the new pane's id, or `undefined` when nothing was split: the pane
    *   is missing, floating, or empty, the budget is spent, or two halves would not fit.
    */
-  split(paneId?: PaneId): PaneId | undefined
+  split(paneId?: PaneId, axis?: SplitAxis): PaneId | undefined
   /**
    * Take a docked tab out into a floating panel. Recorded.
    * @param tabId - the tab; one that is missing or already floating is left alone.
@@ -426,7 +426,6 @@ export class SidebarRightController implements ISidebarRight {
       && target.host === 'dock'
       && target.tabs.length > 0
       && canSplit(surface.layout)
-      && dockPaneIds(surface.layout).length < 2
       && this.mounted.getSnapshot() === sessionId
       && this.canSplitPane(sessionId, target.id)
     const commit = (): void => { actions.openContent(sessionId, {
@@ -597,17 +596,18 @@ export class SidebarRightController implements ISidebarRight {
   /**
    * Explain the same geometry and pane-budget rule used by the split control.
    * @param target - captured command or button target.
+   * @param axis - the split axis whose room rule applies; defaults to `'row'`.
    * @returns a localizable block discriminator, or undefined when splitting is available.
    */
-  splitBlock(target: SidebarRightTarget): 'stale' | 'collapsed' | 'float' | 'empty' | 'budget' | 'width' | undefined {
+  splitBlock(target: SidebarRightTarget, axis: SplitAxis = 'row'): 'stale' | 'collapsed' | 'float' | 'empty' | 'budget' | 'width' | 'height' | undefined {
     const surface = this.mountedSurface()
     if (surface === undefined || !this.isTargetCurrent(target)) return 'stale'
     const { layout } = surface
     if (target.host === 'float') return 'float'
     if (!layout.expanded) return 'collapsed'
     if (getPane(layout, target.paneId).tabs.length === 0) return 'empty'
-    if (!canSplit(layout) || dockPaneIds(layout).length >= 2) return 'budget'
-    if (!this.canSplitPane(target.sessionId, target.paneId)) return 'width'
+    if (!canSplit(layout)) return 'budget'
+    if (!this.canSplitPane(target.sessionId, target.paneId, axis)) return axis === 'row' ? 'width' : 'height'
     return undefined
   }
 
@@ -625,21 +625,22 @@ export class SidebarRightController implements ISidebarRight {
   }
 
   /**
-   * Split a docked pane to its right when the budget and the room rule allow.
+   * Split a docked pane under the budget and room rule of `axis` and seed the new pane.
    * @param paneId - the pane to split; defaults to the active docked pane.
+   * @param axis - `'row'` splits to the right, `'column'` below; defaults to `'row'`.
    * @returns the new pane's id, or `undefined` when nothing was split.
    */
-  split(paneId?: PaneId): PaneId | undefined {
+  split(paneId?: PaneId, axis: SplitAxis = 'row'): PaneId | undefined {
     const { sessionId, actions } = this.require()
     const layout = this.mountedSurface()?.layout
     if (layout === undefined) return undefined
     const target = paneId ?? activeDockPaneId(layout)
     const node = layout.nodes[target]
     if (node === undefined || node.kind !== 'pane' || node.host !== 'dock') return undefined
-    if (!canSplit(layout) || dockPaneIds(layout).length >= 2 || !this.canSplitPane(sessionId, target)) return undefined
+    if (!canSplit(layout) || !this.canSplitPane(sessionId, target, axis)) return undefined
     let created: PaneId | undefined
     this.host.openWithFocus(sessionId, () => {
-      actions.splitPane(sessionId, target, (id) => { created = id })
+      actions.splitPane(sessionId, target, (id) => { created = id }, axis)
       return created
     })
     return created
@@ -706,9 +707,9 @@ export class SidebarRightController implements ISidebarRight {
     return this.screen()?.surface
   }
 
-  /** Whether a Session's docked pane has room for two working halves, as its seat last measured; unmeasured panes do. */
-  private canSplitPane(sessionId: SessionId, paneId: PaneId): boolean {
-    return this.rooms.get(sessionId)?.(paneId) ?? true
+  /** Whether a Session's docked pane has room for two working halves along `axis`, as its seat last measured; unmeasured panes do. */
+  private canSplitPane(sessionId: SessionId, paneId: PaneId, axis: SplitAxis = 'row'): boolean {
+    return this.rooms.get(sessionId)?.(paneId, axis) ?? true
   }
 
   /**
