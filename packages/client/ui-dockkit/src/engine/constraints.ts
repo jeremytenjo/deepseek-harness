@@ -6,8 +6,8 @@
 import type { DockZone, LayoutState, SplitAxis, SplitDirection } from '../contract/types.ts'
 import { assertNever, dockPaneIds } from './tree.ts'
 
-/** V1 caps the docked grid at four panes; floating panes do not count. */
-export const MAX_DOCK_PANES = 4
+/** The engine keeps no docked-pane ceiling; an embedder may still enforce one through `canSplit`. */
+export const MAX_DOCK_PANES = Number.POSITIVE_INFINITY
 
 /** Smallest fraction a divider drag may leave a pane, as a share of its split. */
 export const MIN_PANE_FRACTION = 0.12

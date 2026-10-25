@@ -191,7 +191,7 @@ describe('SidebarRightController — opening', () => {
     expect(findTabPane(layout(), tabOf('a.txt')).id).toBe(left)
   })
 
-  it('opens new content alone in a preferred pane and falls back to the current pane at the limit', () => {
+  it('opens new content in a new pane each time preferNewPane asks', () => {
     const { controller, publish, layout, tabOf, entries, expand } = harness()
     expand()
     publish()
@@ -205,8 +205,8 @@ describe('SidebarRightController — opening', () => {
 
     publish()
     controller.openResource('dsh-resource://file/session/s-test/b.txt', { preferNewPane: true })
-    expect(dockPaneIds(layout())).toHaveLength(2)
-    expect(findTabPane(layout(), tabOf('b.txt')).id).toBe(pane.id)
+    expect(dockPaneIds(layout())).toHaveLength(3)
+    expect(findTabPane(layout(), tabOf('b.txt')).id).not.toBe(pane.id)
   })
 
   it('falls back when the pane is too narrow and reveals existing content without splitting', () => {
@@ -445,7 +445,7 @@ describe('SidebarRightController — layout operations', () => {
     expect(controller.split()).toBeUndefined()
   })
 
-  it('splits the active docked pane and names the new one, or nothing when the budget or the room rule says no', () => {
+  it('splits the active docked pane and names the new one, or nothing when the room rule says no', () => {
     const { controller, instance, publish, layout, entries, room, expand } = harness()
     instance.actions.open(SESSION)
     expand()
@@ -468,12 +468,35 @@ describe('SidebarRightController — layout operations', () => {
     publish()
     const [float] = layout().floats
     expect(controller.split(float)).toBeUndefined()
-    // The budget: split to two panes, then no more.
-    while (dockPaneIds(layout()).length < 2) {
-      expect(controller.split(dockPaneIds(layout()).at(-1))).toBeDefined()
-      publish()
-    }
-    expect(controller.split()).toBeUndefined()
+    // The tree keeps growing: another split is allowed.
+    const count = dockPaneIds(layout()).length
+    expect(controller.split()).toBeDefined()
+    expect(dockPaneIds(layout())).toHaveLength(count + 1)
+  })
+
+  it('splits the active docked pane downward when asked for a column axis', () => {
+    const { controller, instance, publish, layout, expand } = harness()
+    instance.actions.open(SESSION)
+    expand()
+    publish()
+    const created = controller.split(undefined, 'column')
+    expect(created).toBeDefined()
+    expect(dockPaneIds(layout())).toHaveLength(2)
+    const root = layout().nodes[layout().rootId]
+    if (root?.kind !== 'split') throw new Error('expected a split root')
+    expect(root.axis).toBe('column')
+  })
+
+  it('reports a height block for a column split when only the row halves fit', () => {
+    const { controller, instance, publish, measure, expand } = harness()
+    instance.actions.open(SESSION)
+    expand()
+    publish()
+    measure(SESSION, (_paneId, axis) => axis === 'row')
+    const target = controller.commandTarget(null)!
+    expect(controller.splitBlock(target, 'column')).toBe('height')
+    expect(controller.split(undefined, 'column')).toBeUndefined()
+    expect(controller.split(undefined, 'row')).toBeDefined()
   })
 
   it('floats a docked tab, and leaves a floating or missing tab alone', () => {

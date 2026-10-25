@@ -37,16 +37,6 @@ it.each([
   ['split cycle', { minted: 4, layout: { ...splitLayout, nodes: { ...splitLayout.nodes, split3: { ...split, children: ['split3', 'pane1'] } } } }],
   ['invalid split sum', { minted: 4, layout: { ...splitLayout, nodes: { ...splitLayout.nodes, split3: { ...split, sizes: [0.4, 0.4] } } } }],
   ['mismatched split sizes', { minted: 4, layout: { ...splitLayout, nodes: { ...splitLayout.nodes, split3: { ...split, sizes: [0.2, 0.3, 0.5] } } } }],
-  ['vertical split', { minted: 4, layout: { ...splitLayout, nodes: { ...splitLayout.nodes, split3: { ...split, axis: 'column' } } } }],
-  ['three docked panes', { minted: 5, layout: { ...splitLayout, nodes: {
-    ...splitLayout.nodes, pane5: { ...otherPane, id: 'pane5' },
-    split3: { ...split, children: ['pane1', 'pane4', 'pane5'], sizes: [0.3, 0.3, 0.4] },
-  } } }],
-  ['nested split', { minted: 6, layout: { ...splitLayout, nodes: {
-    ...splitLayout.nodes, pane6: { ...otherPane, id: 'pane6' },
-    split3: { ...split, children: ['pane1', 'split5'] },
-    split5: { ...split, id: 'split5', children: ['pane4', 'pane6'] },
-  } } }],
   ['split as active pane', { minted: 4, layout: { ...splitLayout, activePaneId: 'split3' } }],
   ['floating split', { minted: 4, layout: { ...splitLayout, floats: ['split3'] } }],
   ['float without rectangle', { minted: 3, layout: { ...empty.layout, tabs: { tab2: tab }, floats: ['float3'], nodes: { ...empty.layout.nodes, float3: { ...pane, id: 'float3', host: 'float' } } } }],
@@ -58,6 +48,55 @@ it.each([
   expect(localStorage.getItem(key)).toBeNull()
   expect(readSidebarLayout('other')).toEqual(empty)
   expect(new SidebarTabInventory().source.getSnapshot()).toEqual([])
+})
+
+it('restores a two-pane column layout', () => {
+  const stacked = {
+    minted: 4,
+    layout: { ...splitLayout, nodes: { ...splitLayout.nodes, split3: { ...split, axis: 'column' } } },
+  }
+  localStorage.setItem(key, JSON.stringify({ bySession: { [session]: stacked } }))
+  const restored = readSidebarLayout(session)
+  expect(restored?.layout.rootId).toBe('split3')
+  const restoredSplit = restored === undefined
+    ? undefined
+    : Object.values(restored.layout.nodes).find(node => node.kind === 'split')
+  expect(restoredSplit).toMatchObject({ kind: 'split', axis: 'column' })
+  expect(localStorage.getItem(key)).not.toBeNull()
+})
+
+it('restores three panes in one row', () => {
+  const pane5 = { ...otherPane, id: 'pane5' }
+  const layout = {
+    ...splitLayout,
+    nodes: {
+      ...splitLayout.nodes, pane5,
+      split3: { ...split, children: ['pane1', 'pane4', 'pane5'], sizes: [0.3, 0.3, 0.4] },
+    },
+  }
+  localStorage.setItem(key, JSON.stringify({ bySession: { [session]: { minted: 5, layout } } }))
+  const restored = readSidebarLayout(session)
+  expect(restored?.layout.rootId).toBe('split3')
+  expect(Object.values(restored?.layout.nodes ?? {}).filter(node => node.kind === 'pane')).toHaveLength(3)
+})
+
+it('restores a nested split tree', () => {
+  const pane6 = { ...otherPane, id: 'pane6' }
+  const layout = {
+    ...splitLayout,
+    nodes: {
+      ...splitLayout.nodes, pane6,
+      split3: { ...split, children: ['pane1', 'split5'] },
+      split5: { ...split, id: 'split5', children: ['pane4', 'pane6'] },
+    },
+  }
+  localStorage.setItem(key, JSON.stringify({ bySession: { [session]: { minted: 6, layout } } }))
+  const restored = readSidebarLayout(session)
+  expect(restored?.layout.rootId).toBe('split3')
+  const nested = restored === undefined
+    ? undefined
+    : Object.values(restored.layout.nodes).find(node => node.kind === 'split' && node.id === 'split5')
+  expect(nested).toMatchObject({ kind: 'split', axis: 'row' })
 })
 
 it('discards structurally invalid JSON envelopes and keeps an empty saved Session usable', () => {

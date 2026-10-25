@@ -1,10 +1,10 @@
-/** Stable tab siblings in one horizontal Grid, including viewport-positioned floats. */
+/** Stable tab siblings in one Grid over the whole split tree, including viewport-positioned floats. */
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { MutableRefObject, ReactNode } from 'react'
 import clsx from 'clsx'
 import type { DockIntents } from '../contract/adapter.ts'
-import type { LayoutState, PaneId, PaneNode, TabId, TabRecord } from '../contract/types.ts'
-import { findTabPane, floatRect, getNode, getPane } from '../engine/tree.ts'
+import type { LayoutState, NodeId, PaneId, PaneNode, SplitAxis, SplitId, TabId, TabRecord } from '../contract/types.ts'
+import { findTabPane, floatRect, getNode } from '../engine/tree.ts'
 import type { SizePreview } from './PaneTree.tsx'
 import type { PaneCallbacks } from './render.ts'
 import { FloatHeader, useFloatGestures } from './FloatLayer.tsx'
@@ -26,19 +26,153 @@ interface LayoutProps extends TabRetention {
   readonly intents: DockIntents
 }
 
+/** A rectangle in the docked surface's fraction space. */
+interface Rect {
+  readonly x: number
+  readonly y: number
+  readonly w: number
+  readonly h: number
+}
+
+/** Where one pane sits in the flat Grid: zero-based track starts and spans. */
+interface CellPlacement {
+  readonly column: number
+  readonly columnSpan: number
+  readonly row: number
+  readonly rowSpan: number
+}
+
+/** One pane's Grid placement and the two edge rules it owns. */
+interface PaneSlot {
+  readonly pane: PaneNode
+  readonly placement: CellPlacement
+  readonly edgeLeft: boolean
+  readonly seamTop: boolean
+}
+
+/** One divider between two children of a split. */
+interface DividerSlot {
+  readonly splitId: SplitId
+  readonly index: number
+  readonly axis: SplitAxis
+  /** The split's own rectangle, which bounds the drag's travel. */
+  readonly rect: Rect
+  /** Boundary position along the split's axis, in fraction space. */
+  readonly at: number
+}
+
 interface TabHostProps extends LayoutProps {
   readonly tab: TabRecord
   readonly pane: PaneNode
-  readonly column: number
+  readonly placement: CellPlacement
+  readonly columnIndex: number
+  readonly edgeLeft: boolean
+  readonly seamTop: boolean
   readonly floats: ReturnType<typeof useFloatGestures>
   readonly focusRequest: MutableRefObject<{ readonly tabId: TabId; readonly origin: Element | null } | undefined>
   /** Chip-box offsets by pane, read and recorded by each selected tab's strip. */
   readonly offsets: Map<PaneId, number>
 }
 
+/** Tolerance for comparing fraction-space boundaries that mathematical sums should meet. */
+const EPSILON = 1e-9
+
+/** Round a boundary so sibling rectangles that should share an edge compare equal. */
+function boundary(value: number): number {
+  return Math.round(value * 1e6) / 1e6
+}
+
+/** Unique, sorted boundary positions including both outer edges. */
+function boundaries(values: readonly number[]): number[] {
+  const out: number[] = []
+  for (const value of [...values, 0, 1].sort((a, b) => a - b)) {
+    const last = out[out.length - 1]
+    if (last === undefined || value - last > 1e-6) out.push(boundary(value))
+  }
+  return out
+}
+
+/** CSS Grid tracks for the spans between consecutive boundaries. */
+function trackTemplate(values: readonly number[]): string {
+  const tracks: string[] = []
+  for (let index = 1; index < values.length; index += 1) {
+    const previous = values[index - 1]
+    const value = values[index]
+    if (previous === undefined || value === undefined) continue
+    tracks.push(`minmax(0, ${value - previous}fr)`)
+  }
+  return tracks.length === 0 ? 'minmax(0, 1fr)' : tracks.join(' ')
+}
+
+/** Where a boundary sits, or the nearest track when rounding left it off the list. */
+function trackOf(values: readonly number[], value: number): number {
+  const index = values.indexOf(boundary(value))
+  return index < 0 ? 0 : index
+}
+
+/**
+ * Flatten the split tree into one Grid: every leaf pane maps to the tracks its
+ * rectangle covers, so tab hosts stay siblings of the Grid however the tree
+ * nests. Dividers overlay the flat Grid at their split's own rectangle, which
+ * keeps a nested drag's travel bounded to that split.
+ */
+function planDocked(state: LayoutState, preview: SizePreview | undefined): {
+  panes: PaneSlot[]
+  dividers: DividerSlot[]
+  xs: number[]
+  ys: number[]
+} {
+  const panes: { pane: PaneNode; rect: Rect }[] = []
+  const dividers: DividerSlot[] = []
+  const walk = (id: NodeId, rect: Rect): void => {
+    const node = getNode(state, id)
+    if (node.kind === 'pane') {
+      panes.push({ pane: node, rect })
+      return
+    }
+    const sizes = preview?.splitId === node.id ? preview.sizes : node.sizes
+    const row = node.axis === 'row'
+    let offset = row ? rect.x : rect.y
+    const extent = row ? rect.w : rect.h
+    node.children.forEach((child, index) => {
+      const size = sizes[index] ?? 0
+      walk(child, row
+        ? { x: offset, y: rect.y, w: extent * size, h: rect.h }
+        : { x: rect.x, y: offset, w: rect.w, h: extent * size })
+      offset += extent * size
+      if (index < node.children.length - 1) {
+        dividers.push({ splitId: node.id, index, axis: node.axis, rect, at: offset })
+      }
+    })
+  }
+  walk(state.rootId, { x: 0, y: 0, w: 1, h: 1 })
+  const xs = boundaries(panes.flatMap(({ rect }) => [rect.x, rect.x + rect.w]))
+  const ys = boundaries(panes.flatMap(({ rect }) => [rect.y, rect.y + rect.h]))
+  return {
+    panes: panes.map(({ pane, rect }) => {
+      const column = trackOf(xs, rect.x)
+      const row = trackOf(ys, rect.y)
+      return {
+        pane,
+        placement: {
+          column,
+          columnSpan: Math.max(1, trackOf(xs, rect.x + rect.w) - column),
+          row,
+          rowSpan: Math.max(1, trackOf(ys, rect.y + rect.h) - row),
+        },
+        edgeLeft: rect.x <= EPSILON,
+        seamTop: rect.y > EPSILON,
+      }
+    }),
+    dividers,
+    xs,
+    ys,
+  }
+}
+
 /** A tab's ancestors stay identical across selection, pane moves and floating. */
-function TabHost({ state, callbacks, intents, tab, pane, column, floats, focusRequest, offsets, keepMounted,
-  active = true }: TabHostProps): ReactNode {
+function TabHost({ state, callbacks, intents, tab, pane, placement, columnIndex, edgeLeft, seamTop, floats,
+  focusRequest, offsets, keepMounted, active = true }: TabHostProps): ReactNode {
   const floating = pane.host === 'float'
   const selected = floating || pane.activeTabId === tab.id
   const visible = active && selected && (floating || state.expanded)
@@ -78,9 +212,17 @@ function TabHost({ state, callbacks, intents, tab, pane, column, floats, focusRe
   const rect = floating ? lifted ?? floatRect(pane) : undefined
   const depth = lifted === undefined ? state.floats.indexOf(pane.id) + 1 : state.floats.length + 1
   return (
-    <div className={clsx(css.tabCell, floating && css.floatingCell)} hidden={!selected}
-      data-dockkit-host={floating ? 'float' : 'dock'} data-dockkit-column={floating ? undefined : column}
-      style={{ gridColumn: floating ? 1 : column * 2 + 1, gridRow: 1, order: floating ? depth : 0 }}>
+    <div
+      className={clsx(css.tabCell, floating && css.floatingCell,
+        !floating && edgeLeft && css.tabCellEdgeLeft,
+        !floating && seamTop && css.tabCellSeamTop)}
+      hidden={!selected}
+      data-dockkit-host={floating ? 'float' : 'dock'} data-dockkit-column={floating ? undefined : columnIndex}
+      style={floating ? { gridColumn: 1, gridRow: 1, order: depth } : {
+        gridColumn: `${placement.column + 1} / span ${placement.columnSpan}`,
+        gridRow: `${placement.row + 1} / span ${placement.rowSpan}`,
+        order: 0,
+      }}>
       <section ref={host} tabIndex={-1} className={clsx(css.tabHost, floating ? css.float : css.pane)}
         aria-hidden={!visible || undefined}
         data-dockkit-content={tab.id}
@@ -88,7 +230,7 @@ function TabHost({ state, callbacks, intents, tab, pane, column, floats, focusRe
         data-dockkit-pane-active={!floating && state.activePaneId === pane.id || undefined}
         data-dockkit-float={floating ? pane.id : undefined}
         data-dockkit-float-active={floating && state.activePaneId === pane.id || undefined}
-        data-dockkit-column={!floating ? column : undefined}
+        data-dockkit-column={!floating ? columnIndex : undefined}
         style={rect === undefined ? undefined : {
           left: rect.x, top: `max(var(--dsh-dockkit-float-top, 0px), ${rect.y}px)`, width: rect.width, height: rect.height,
         }}
@@ -112,10 +254,10 @@ function TabHost({ state, callbacks, intents, tab, pane, column, floats, focusRe
 }
 
 /**
- * One or two horizontal panes; CSS resolves content sizes from track fractions.
+ * All docked panes in one flat Grid over the split tree, plus one overlay per
+ * divider; CSS resolves content sizes from track fractions.
  * @param props - committed layout, gesture preview and body retention policy.
  * @returns stable tab containers, including floating tabs.
- * @throws if the docked tree is not one pane or two horizontal panes.
  */
 export function TabLayout(props: LayoutProps): ReactNode {
   const { state, callbacks, preview } = props
@@ -132,30 +274,54 @@ export function TabLayout(props: LayoutProps): ReactNode {
     },
   }
   const root = getNode(state, state.rootId)
-  if (root.kind === 'split' && (root.axis !== 'row' || root.children.length !== 2)) {
-    throw new Error('DockLayout requires one pane or two horizontally split panes')
-  }
-  const panes = root.kind === 'pane' ? [root] : root.children.map(id => getPane(state, id))
-  const sizes = root.kind === 'split' ? preview?.splitId === root.id ? preview.sizes : root.sizes : [1]
+  const { panes, dividers, xs, ys } = planDocked(state, preview)
+  const slots = new Map(panes.map((slot, index) => [slot.pane.id, { slot, index }]))
   const floats = useFloatGestures(state, props.intents)
-  const columns = sizes.map(size => `minmax(0, ${size}fr)`).join(' 0px ')
   return (
     <div className={css.tabLayout} data-dockkit-split={root.kind === 'split' ? root.id : undefined}
-      style={{ gridTemplateColumns: columns }}>
+      data-dockkit-axis={root.kind === 'split' ? root.axis : 'row'}
+      style={{ gridTemplateColumns: trackTemplate(xs), gridTemplateRows: trackTemplate(ys) }}>
       {/* Logical order changes must not make React move a connected webview's ancestor. */}
       {Object.values(state.tabs).sort((a, b) => a.id.localeCompare(b.id)).map((tab) => {
         const pane = findTabPane(state, tab.id)
+        const held = slots.get(pane.id)
         return <TabHost key={tab.id} {...props} callbacks={tabCallbacks} tab={tab} pane={pane}
-          column={panes.findIndex(candidate => candidate.id === pane.id)} floats={floats} focusRequest={focusRequest} offsets={offsets} />
+          placement={held?.slot.placement ?? { column: 0, columnSpan: 1, row: 0, rowSpan: 1 }}
+          columnIndex={held?.index ?? 0}
+          edgeLeft={held?.slot.edgeLeft ?? false} seamTop={held?.slot.seamTop ?? false}
+          floats={floats} focusRequest={focusRequest} offsets={offsets} />
       })}
-      {panes.filter(pane => pane.tabs.length === 0).map(pane => (
-        <div key={pane.id} className={css.emptyTabHost} data-dockkit-empty style={{ gridColumn: panes.indexOf(pane) * 2 + 1, gridRow: 1 }}>
+      {panes.filter(({ pane }) => pane.tabs.length === 0).map(({ pane, placement, edgeLeft, seamTop }, index) => (
+        <div key={pane.id}
+          className={clsx(css.emptyTabHost, edgeLeft && css.tabCellEdgeLeft, seamTop && css.tabCellSeamTop)}
+          data-dockkit-empty data-dockkit-column={index}
+          style={{
+            gridColumn: `${placement.column + 1} / span ${placement.columnSpan}`,
+            gridRow: `${placement.row + 1} / span ${placement.rowSpan}`,
+          }}>
           <TabPanel state={state} pane={pane} callbacks={callbacks} />
         </div>
       ))}
-      {root.kind === 'split' && <div className={clsx(css.divider, css.tabLayoutDivider)}
-        data-dockkit-divider={`${root.id}:0`} style={{ gridColumn: 2, gridRow: 1 }}
-        onPointerDown={(event) => { callbacks.onDividerPressed(root.id, 0, event) }} />}
+      {dividers.map(divider => (
+        <div key={`${divider.splitId}:${divider.index}`} className={css.tabDividerRegion}
+          style={{
+            left: `${divider.rect.x * 100}%`,
+            top: `${divider.rect.y * 100}%`,
+            width: `${divider.rect.w * 100}%`,
+            height: `${divider.rect.h * 100}%`,
+          }}>
+          <div
+            className={clsx(css.divider, css.tabLayoutDivider,
+              divider.axis === 'column' && css.tabLayoutDividerColumn)}
+            data-dockkit-divider={`${divider.splitId}:${divider.index}`}
+            style={divider.axis === 'row'
+              ? { position: 'absolute', top: 0, bottom: 0, width: 0,
+                left: `${((divider.at - divider.rect.x) / divider.rect.w) * 100}%` }
+              : { position: 'absolute', left: 0, right: 0, height: 0,
+                top: `${((divider.at - divider.rect.y) / divider.rect.h) * 100}%` }}
+            onPointerDown={(event) => { callbacks.onDividerPressed(divider.splitId, divider.index, event) }} />
+        </div>
+      ))}
     </div>
   )
 }
